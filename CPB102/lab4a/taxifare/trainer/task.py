@@ -45,7 +45,7 @@ def main():
 EXPORT_SUBDIRECTORY = 'model'
 HYPERPARAMS = {
   'batch_size': 1024,
-  'learning_rate': 0.1,
+  'learning_rate': 0.01,
   'hidden_layer1_size': 5,
   'hidden_layer2_size': 3,
   'hidden_layer3_size': 2,

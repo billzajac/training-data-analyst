@@ -96,17 +96,20 @@ def inference(inputs, metadata, hyperparams):
   input_size = 1
   output_size = metadata.features['fare_amount']['size']
   
-  inputs = tf.Print(inputs, data=[inputs], message='INPUT VALUES = ', first_n=5)
-  nnoutput = tf.contrib.layers.fully_connected(inputs, output_size, activation_fn=None,
-                                   biases_initializer=tf.constant_initializer(0.1))
-  nnoutput = tf.Print(nnoutput, data=[nnoutput], message='PRED VALUES = ', first_n=5)
+  #inputs = tf.Print(inputs, data=[inputs], message='INPUT VALUES = ', first_n=5)
+
+  initial_weights = tf.truncated_normal([input_size, output_size], stddev=1.0/math.sqrt(input_size))
+  weights = tf.Variable(initial_weights, name='weights')
+  nnoutput = tf.matmul(inputs, weights)
+
+  #nnoutput = tf.Print(nnoutput, data=[nnoutput], message='PRED VALUES = ', first_n=5)
  
   return nnoutput
 
 
 def loss(output, targets):
-  output = tf.Print(output, data=[output], message='OUTPUT = ', first_n=5)
-  targets = tf.Print(targets, data=[targets], message='TARGETS = ', first_n=5)
+  #output = tf.Print(output, data=[output], message='OUTPUT = ')
+  #targets = tf.Print(targets, data=[targets], message='TARGETS = ')
   loss = tf.sqrt(tf.reduce_mean(tf.square(output - targets)), name = 'loss') # RMSE
   return loss
 
@@ -114,6 +117,6 @@ def training(loss_op, learning_rate):
   with tf.name_scope('train'):
     tf.scalar_summary(loss_op.op.name, loss_op)
     global_step = tf.Variable(0, name='global_step', trainable=False)
-    optimizer = tf.train.AdadeltaOptimizer(learning_rate)
+    optimizer = tf.train.FtrlOptimizer(learning_rate)
     train_op = optimizer.minimize(loss_op, global_step)
     return train_op, global_step
