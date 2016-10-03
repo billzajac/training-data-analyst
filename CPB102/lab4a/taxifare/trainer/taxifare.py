@@ -67,21 +67,6 @@ def _print_shape(t, name):
   else:
      print name, ' = ', t.get_shape().as_list()
 
-# TODO: make hyperparameter
-NUMBUCKETS = 5
-
-def feature_cross_latlon(plat, plon, name):
-    # discretize plat. numbers are in [-1,1] so if you want 11 buckets, need to multiply by 5 to get [-5,5]
-    scalefactor = tf.constant((NUMBUCKETS - 1) / 2.0)
-    dplat = tf.round( tf.scalar_mul(scalefactor, plat) , name='discretize_{0}_latitude'.format(name) )
-    dplon = tf.round( tf.scalar_mul(scalefactor, plon) , name='discretize_{0}_longitude'.format(name) )
-
-    # FC dplat x dplon
-    depth = NUMBUCKETS * NUMBUCKETS
-    dplatlon_index = tf.to_int32(tf.round(tf.add(tf.scalar_mul(tf.constant(NUMBUCKETS*1.0), dplat), dplon)), name='{0}_location_index'.format(name))
-    dplatlon = tf.squeeze(tf.one_hot(dplatlon_index, depth, axis=-1, name='{0}_location'.format(name)), [1])  # (batchsize, 1, depth) -> batchsize, depth
-    return dplatlon_index, dplatlon
-
 
 def _create_fakekey(input_data):
    batchsize = tf.shape(input_data)[0]
@@ -100,60 +85,28 @@ def create_inputs(metadata, input_data=None):
     plon = parsed['plon']
     dlat = parsed['dlat']
     dlon = parsed['dlon']
-    dayofweek = parsed['dayofweek']
-    hourofday = parsed['hourofday']
+    dist_cyl = 1000*tf.sqrt( tf.square(tf.sub(plat, dlat)) + tf.square(tf.sub(plon, dlon)) )
 
-    # pickup is [batchsize, nbuckets**2]
-    pickup_index, pickup = feature_cross_latlon(plat, plon, 'pickup')
-    dropoff_index, dropoff = feature_cross_latlon(dlat, dlon, 'dropoff')
-    # pickupdropoff is [batchsize, nbuckets**4]
-    pickupdropoff = tf.squeeze(tf.one_hot(tf.mul(pickup_index, dropoff_index), depth=NUMBUCKETS**4, axis=-1), [1])
-    latdist = tf.abs(tf.sub(plat, dlat))
-    londist = tf.abs(tf.sub(plon, dlon))
-
-    _print_shape(plat, 'plat')
-    _print_shape(latdist, 'latdist')
-    _print_shape(pickup, 'pickup')
-    _print_shape(pickupdropoff, 'pickupdropoff')
-
-    # weekend/weekday, rush-hours and low-traffic nighttime
-    weekend = tf.to_float(tf.logical_or( tf.greater(dayofweek, 6.5), tf.less(dayofweek, 1.5), name='weekend')) #Sa,Su
-    night = tf.to_float(tf.logical_or( tf.greater(hourofday, 21.5), tf.less(hourofday, 6.5), name='night')) #10-6
-    morning = tf.to_float(tf.logical_or( tf.greater(hourofday, 6.5), tf.less(hourofday, 10.5), name='morning')) #7-10
-    evening = tf.to_float(tf.logical_or( tf.greater(hourofday, 15.5), tf.less(hourofday, 20.5), name='evening')) #4-8
-
-    # combine all the inputs
-    inputs = tf.concat(1, [plat, plon, dlat, dlon, latdist, londist, pickup, dropoff, pickupdropoff, weekend, night, morning, evening])
+    inputs = dist_cyl
     print 'inputs=',inputs.get_shape().as_list()
-
     return (input_data, inputs, tf.squeeze(parsed['fare_amount']),
             _create_fakekey(input_data)) # no key tf.identity(parsed['key']))
 
 def inference(inputs, metadata, hyperparams):
-  # input_size = metadata.features['inputs']['size']
-  input_size = 6 + (NUMBUCKETS**2) * 2 + (NUMBUCKETS**4) + 4
+  input_size = 1
   output_size = metadata.features['fare_amount']['size']
-
-  h = [hyperparams['hidden_layer1_size'],
-       hyperparams['hidden_layer2_size'],
-       hyperparams['hidden_layer3_size']]
-  hidden = tf.contrib.layers.stack(inputs,
-                                   tf.contrib.layers.fully_connected,
-                                   h, activation_fn=tf.nn.relu)
-  output = tf.contrib.layers.fully_connected(hidden, output_size, activation_fn=None)
-  output = tf.identity(output, 'predicted_fare') # assign name
-
-  return output
+  
+  inputs = tf.Print(inputs, data=[inputs], message='INPUT VALUES = ', first_n=5)
+  nnoutput = tf.contrib.layers.fully_connected(inputs, output_size, activation_fn=None,
+                                   biases_initializer=tf.constant_initializer(0.1))
+  nnoutput = tf.Print(nnoutput, data=[nnoutput], message='PRED VALUES = ', first_n=5)
+ 
+  return nnoutput
 
 
 def loss(output, targets):
-  """Calculates the loss from the output and the labels.
-  Args:
-    output: output layer tensor, float - [batch_size].
-    targets: Target value tensor, float - [batch_size].
-  Returns:
-    loss_op: Loss tensor of type float.
-  """
+  output = tf.Print(output, data=[output], message='OUTPUT = ', first_n=5)
+  targets = tf.Print(targets, data=[targets], message='TARGETS = ', first_n=5)
   loss = tf.sqrt(tf.reduce_mean(tf.square(output - targets)), name = 'loss') # RMSE
   return loss
 
@@ -161,6 +114,6 @@ def training(loss_op, learning_rate):
   with tf.name_scope('train'):
     tf.scalar_summary(loss_op.op.name, loss_op)
     global_step = tf.Variable(0, name='global_step', trainable=False)
-    optimizer = tf.train.AdagradOptimizer(learning_rate)
+    optimizer = tf.train.AdadeltaOptimizer(learning_rate)
     train_op = optimizer.minimize(loss_op, global_step)
     return train_op, global_step
